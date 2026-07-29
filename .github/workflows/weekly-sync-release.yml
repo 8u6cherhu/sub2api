@@ -67,7 +67,7 @@ jobs:
           image_name="ghcr.io/${GITHUB_REPOSITORY,,}"
           upstream_version="$(tr -d '\r\n' < backend/cmd/server/VERSION)"
 
-          if gh release view "${release_tag}" >/dev/null 2>&1; then
+          if gh release view "${release_tag}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             publish=false
           else
             publish=true
@@ -90,8 +90,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push amd64 image
+      - name: Check whether image already exists
         if: steps.release.outputs.publish == 'true'
+        id: image
+        env:
+          IMAGE_REF: ${{ steps.release.outputs.image_name }}:${{ steps.release.outputs.tag }}
+        run: |
+          if docker buildx imagetools inspect "${IMAGE_REF}" >/dev/null 2>&1; then
+            echo "build=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "build=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Build and push amd64 image
+        if: steps.release.outputs.publish == 'true' && steps.image.outputs.build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -117,6 +129,7 @@ jobs:
           UPSTREAM_SHA: ${{ steps.sync.outputs.upstream_sha }}
         run: |
           gh release create "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
             --target "${FORK_SHA}" \
             --title "Sub2API ${RELEASE_TAG}" \
             --notes "Weekly upstream sync with the minimal Hermes web_search compatibility patch.
