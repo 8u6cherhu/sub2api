@@ -1,0 +1,129 @@
+name: Weekly upstream sync and release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/weekly-sync-release.yml
+      - backend/internal/pkg/antigravity/request_transformer.go
+  workflow_dispatch:
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: weekly-upstream-sync-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: Wei-Shaw/sub2api
+
+jobs:
+  sync-build-release:
+    if: github.repository == '8u6cherhu/sub2api'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Merge upstream main
+        id: sync
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch upstream main --tags
+
+          before_sha="$(git rev-parse HEAD)"
+          git merge --no-edit upstream/main
+          after_sha="$(git rev-parse HEAD)"
+          upstream_sha="$(git rev-parse upstream/main)"
+
+          if [ "${after_sha}" != "${before_sha}" ]; then
+            git push origin HEAD:main
+          fi
+
+          echo "fork_sha=${after_sha}" >> "${GITHUB_OUTPUT}"
+          echo "upstream_sha=${upstream_sha}" >> "${GITHUB_OUTPUT}"
+          echo "upstream_short=$(git rev-parse --short=12 upstream/main)" >> "${GITHUB_OUTPUT}"
+
+      - name: Prepare release metadata
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_SHORT: ${{ steps.sync.outputs.upstream_short }}
+        run: |
+          release_tag="weekly-$(date -u +%Y%m%d)-${UPSTREAM_SHORT}"
+          image_name="ghcr.io/${GITHUB_REPOSITORY,,}"
+          upstream_version="$(tr -d '\r\n' < backend/cmd/server/VERSION)"
+
+          if gh release view "${release_tag}" >/dev/null 2>&1; then
+            publish=false
+          else
+            publish=true
+          fi
+
+          echo "tag=${release_tag}" >> "${GITHUB_OUTPUT}"
+          echo "image_name=${image_name}" >> "${GITHUB_OUTPUT}"
+          echo "version=${upstream_version}-weekly.${UPSTREAM_SHORT}" >> "${GITHUB_OUTPUT}"
+          echo "publish=${publish}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        if: steps.release.outputs.publish == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        if: steps.release.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push amd64 image
+        if: steps.release.outputs.publish == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.release.outputs.image_name }}:${{ steps.release.outputs.tag }}
+            ${{ steps.release.outputs.image_name }}:weekly-latest
+          build-args: |
+            VERSION=${{ steps.release.outputs.version }}
+            COMMIT=${{ steps.sync.outputs.fork_sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Create GitHub release
+        if: steps.release.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          IMAGE_NAME: ${{ steps.release.outputs.image_name }}
+          FORK_SHA: ${{ steps.sync.outputs.fork_sha }}
+          UPSTREAM_SHA: ${{ steps.sync.outputs.upstream_sha }}
+        run: |
+          gh release create "${RELEASE_TAG}" \
+            --target "${FORK_SHA}" \
+            --title "Sub2API ${RELEASE_TAG}" \
+            --notes "Weekly upstream sync with the minimal Hermes web_search compatibility patch.
+
+          Upstream: ${UPSTREAM_REPOSITORY}@${UPSTREAM_SHA}
+          Fork: ${GITHUB_REPOSITORY}@${FORK_SHA}
+          Image: ${IMAGE_NAME}:${RELEASE_TAG}
+          Rolling candidate: ${IMAGE_NAME}:weekly-latest
+
+          This workflow builds the image only; it does not run the upstream test suites."

@@ -54,9 +54,6 @@ func DefaultTransformOptions() TransformOptions {
 	}
 }
 
-// webSearchFallbackModel web_search 请求使用的降级模型
-const webSearchFallbackModel = "gemini-2.5-flash"
-
 // MaxTokensBudgetPadding max_tokens 自动调整时在 budget_tokens 基础上增加的额度
 // Claude API 要求 max_tokens > thinking.budget_tokens，否则返回 400 错误
 const MaxTokensBudgetPadding = 1000
@@ -94,9 +91,6 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
 	targetModel := mappedModel
 	if hasWebSearchTool {
 		requestType = "web_search"
-		if targetModel != webSearchFallbackModel {
-			targetModel = webSearchFallbackModel
-		}
 	}
 
 	// 检测是否启用 thinking
@@ -709,14 +703,9 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
 		return nil
 	}
 
-	hasWebSearch := hasWebSearchTool(tools)
-
 	// 普通工具
 	var funcDecls []GeminiFunctionDecl
 	for _, tool := range tools {
-		if isWebSearchTool(tool) {
-			continue
-		}
 		// 跳过无效工具名称
 		if strings.TrimSpace(tool.Name) == "" {
 			log.Printf("Warning: skipping tool with empty name")
@@ -765,17 +754,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
 	if len(funcDecls) > 0 {
 		declarations = append(declarations, GeminiToolDeclaration{
 			FunctionDeclarations: funcDecls,
-		})
-	}
-	if hasWebSearch {
-		declarations = append(declarations, GeminiToolDeclaration{
-			GoogleSearch: &GeminiGoogleSearch{
-				EnhancedContent: &GeminiEnhancedContent{
-					ImageSearch: &GeminiImageSearch{
-						MaxResultCount: 5,
-					},
-				},
-			},
 		})
 	}
 	if len(declarations) == 0 {
