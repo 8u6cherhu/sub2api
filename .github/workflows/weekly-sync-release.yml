@@ -1,0 +1,154 @@
+name: Weekly upstream build and release
+
+on:
+  push:
+    branches:
+      - hermes-build
+    paths:
+      - .github/workflows/weekly-sync-release.yml
+      - patches/hermes-web-search-function.patch
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: Optional upstream branch, tag, or commit
+        required: false
+        default: main
+  schedule:
+    - cron: "17 4 * * 1"
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: weekly-upstream-build-release
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPOSITORY: Wei-Shaw/sub2api
+
+jobs:
+  build-release:
+    if: github.repository == '8u6cherhu/sub2api'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out patch repository
+        uses: actions/checkout@v6
+
+      - name: Check out upstream Sub2API
+        env:
+          REQUESTED_REF: ${{ inputs.upstream_ref || 'main' }}
+        run: |
+          git clone --filter=blob:none --no-checkout \
+            "https://github.com/${UPSTREAM_REPOSITORY}.git" upstream
+          git -C upstream checkout "${REQUESTED_REF}"
+
+      - name: Apply Hermes compatibility patch
+        run: |
+          patch_file="${GITHUB_WORKSPACE}/patches/hermes-web-search-function.patch"
+
+          if git -C upstream apply --check "${patch_file}"; then
+            git -C upstream apply "${patch_file}"
+          elif git -C upstream apply --reverse --check "${patch_file}"; then
+            echo "Upstream already contains the Hermes web_search behavior; patch skipped."
+          else
+            echo "The compatibility patch no longer applies cleanly to upstream." >&2
+            exit 1
+          fi
+
+      - name: Prepare release metadata
+        id: release
+        run: |
+          upstream_sha="$(git -C upstream rev-parse HEAD)"
+          upstream_short="$(git -C upstream rev-parse --short=12 HEAD)"
+          upstream_version="$(tr -d '\r\n' < upstream/backend/cmd/server/VERSION)"
+          go_version="$(awk '$1 == "go" { print $2; exit }' upstream/backend/go.mod)"
+          if [[ ! "${go_version}" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "Unable to determine a valid Go version from upstream/backend/go.mod" >&2
+            exit 1
+          fi
+          patch_short="$(sha256sum patches/hermes-web-search-function.patch | cut -c1-12)"
+          release_tag="weekly-$(date -u +%Y%m%d)-${upstream_short}-p${patch_short}"
+          image_name="ghcr.io/${GITHUB_REPOSITORY,,}"
+
+          echo "upstream_sha=${upstream_sha}" >> "${GITHUB_OUTPUT}"
+          echo "upstream_short=${upstream_short}" >> "${GITHUB_OUTPUT}"
+          echo "go_version=${go_version}" >> "${GITHUB_OUTPUT}"
+          echo "patch_short=${patch_short}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${release_tag}" >> "${GITHUB_OUTPUT}"
+          echo "image_name=${image_name}" >> "${GITHUB_OUTPUT}"
+          echo "version=${upstream_version}-weekly.${upstream_short}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check whether immutable image exists
+        id: image
+        env:
+          IMAGE_REF: ${{ steps.release.outputs.image_name }}:${{ steps.release.outputs.tag }}
+        run: |
+          if docker buildx imagetools inspect "${IMAGE_REF}" >/dev/null 2>&1; then
+            echo "build=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "build=true" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Build and push amd64 image
+        if: steps.image.outputs.build == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: upstream
+          file: upstream/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.release.outputs.image_name }}:${{ steps.release.outputs.tag }}
+          build-args: |
+            GOLANG_IMAGE=golang:${{ steps.release.outputs.go_version }}-alpine
+            VERSION=${{ steps.release.outputs.version }}
+            COMMIT=${{ steps.release.outputs.upstream_sha }}+hermes.${{ steps.release.outputs.patch_short }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Update rolling image tag
+        env:
+          IMAGE_NAME: ${{ steps.release.outputs.image_name }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          docker buildx imagetools create \
+            --tag "${IMAGE_NAME}:weekly-latest" \
+            "${IMAGE_NAME}:${RELEASE_TAG}"
+
+      - name: Create GitHub release if missing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          IMAGE_NAME: ${{ steps.release.outputs.image_name }}
+          UPSTREAM_SHA: ${{ steps.release.outputs.upstream_sha }}
+          PATCH_SHORT: ${{ steps.release.outputs.patch_short }}
+        run: |
+          if gh release view "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release already exists: ${RELEASE_TAG}"
+            exit 0
+          fi
+
+          gh release create "${RELEASE_TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "Sub2API ${RELEASE_TAG}" \
+            --notes "Independent upstream build with the minimal Hermes web_search compatibility patch.
+
+          Upstream: ${UPSTREAM_REPOSITORY}@${UPSTREAM_SHA}
+          Patch: ${PATCH_SHORT}
+          Image: ${IMAGE_NAME}:${RELEASE_TAG}
+          Rolling tag: ${IMAGE_NAME}:weekly-latest
+
+          The canonical main branch stays aligned with upstream; this build runs only from hermes-build and does not run tests."
