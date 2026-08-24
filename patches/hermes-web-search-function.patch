@@ -1,5 +1,21 @@
+diff --git a/backend/internal/pkg/antigravity/oauth.go b/backend/internal/pkg/antigravity/oauth.go
+index 26b307bb..afe95300 100644
+--- a/backend/internal/pkg/antigravity/oauth.go
++++ b/backend/internal/pkg/antigravity/oauth.go
+@@ -123,9 +123,9 @@ func GetUserAgentVersionForContext(ctx context.Context) string {
+ // BuildUserAgent 使用指定版本号构造 User-Agent；版本为空或非法时回退默认值。
+ func BuildUserAgent(version string) string {
+ 	if normalized := NormalizeUserAgentVersion(version); normalized != "" {
+-		return fmt.Sprintf("antigravity/%s windows/amd64", normalized)
++		return fmt.Sprintf("antigravity/%s darwin/arm64", normalized)
+ 	}
+-	return fmt.Sprintf("antigravity/%s windows/amd64", defaultUserAgentVersion)
++	return fmt.Sprintf("antigravity/%s darwin/arm64", defaultUserAgentVersion)
+ }
+ 
+ // GetUserAgentForContext 返回当前请求应使用的 User-Agent。
 diff --git a/backend/internal/pkg/antigravity/request_transformer.go b/backend/internal/pkg/antigravity/request_transformer.go
-index 7d0a7079..372adc77 100644
+index 9da3cc33..802ca228 100644
 --- a/backend/internal/pkg/antigravity/request_transformer.go
 +++ b/backend/internal/pkg/antigravity/request_transformer.go
 @@ -54,9 +54,6 @@ func DefaultTransformOptions() TransformOptions {
@@ -22,7 +38,7 @@ index 7d0a7079..372adc77 100644
  	}
  
  	// 检测是否启用 thinking
-@@ -709,14 +703,9 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
+@@ -731,14 +725,9 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
  		return nil
  	}
  
@@ -37,7 +53,7 @@ index 7d0a7079..372adc77 100644
  		// 跳过无效工具名称
  		if strings.TrimSpace(tool.Name) == "" {
  			log.Printf("Warning: skipping tool with empty name")
-@@ -767,17 +756,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
+@@ -789,17 +778,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
  			FunctionDeclarations: funcDecls,
  		})
  	}
