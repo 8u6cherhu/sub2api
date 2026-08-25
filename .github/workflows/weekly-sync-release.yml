@@ -8,6 +8,7 @@ on:
       - .github/workflows/weekly-sync-release.yml
       - patches/hermes-web-search-function.patch
       - patches/capture-single-request-body.patch
+      - patches/antigravity-macos-identity.patch
   workflow_dispatch:
     inputs:
       upstream_ref:
@@ -71,6 +72,20 @@ jobs:
             exit 1
           fi
 
+      - name: Apply Antigravity macOS identity patch
+        run: |
+          patch_file="${GITHUB_WORKSPACE}/patches/antigravity-macos-identity.patch"
+          if git -C upstream apply --check "${patch_file}"; then
+            git -C upstream apply "${patch_file}"
+          elif grep -q 'User requests are enclosed within <USER_REQUEST> tags' upstream/backend/internal/pkg/antigravity/request_transformer.go \
+            && grep -q 'The USER.*OS version is mac\.' upstream/backend/internal/pkg/antigravity/request_transformer.go \
+            && ! grep -q 'SYSTEM_PROMPT_END' upstream/backend/internal/pkg/antigravity/request_transformer.go; then
+            echo "Antigravity macOS identity patch already present; patch skipped."
+          else
+            echo "The Antigravity identity patch no longer applies cleanly to upstream." >&2
+            exit 1
+          fi
+
       - name: Prepare release metadata
         id: release
         run: |
@@ -104,41 +119,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Check whether immutable image exists
-        id: image
-        env:
-          IMAGE_REF: ${{ steps.release.outputs.image_name }}:${{ steps.release.outputs.tag }}
-        run: |
-          if docker buildx imagetools inspect "${IMAGE_REF}" >/dev/null 2>&1; then
-            echo "build=false" >> "${GITHUB_OUTPUT}"
-          else
-            echo "build=true" >> "${GITHUB_OUTPUT}"
-          fi
-
       - name: Build and push amd64 image
-        if: steps.image.outputs.build == 'true'
         uses: docker/build-push-action@v6
         with:
           context: upstream
           file: upstream/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.release.outputs.image_name }}:${{ steps.release.outputs.tag }}
+          tags: ${{ steps.release.outputs.image_name }}:weekly-latest
           build-args: |
             GOLANG_IMAGE=golang:${{ steps.release.outputs.go_version }}-alpine
             VERSION=${{ steps.release.outputs.version }}
             COMMIT=${{ steps.release.outputs.upstream_sha }}+hermes.${{ steps.release.outputs.patch_short }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Update rolling image tag
-        env:
-          IMAGE_NAME: ${{ steps.release.outputs.image_name }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-        run: |
-          docker buildx imagetools create \
-            --tag "${IMAGE_NAME}:weekly-latest" \
-            "${IMAGE_NAME}:${RELEASE_TAG}"
 
       - name: Create GitHub release if missing
         env:
@@ -161,7 +155,6 @@ jobs:
 
           Upstream: ${UPSTREAM_REPOSITORY}@${UPSTREAM_SHA}
           Patch: ${PATCH_SHORT}
-          Image: ${IMAGE_NAME}:${RELEASE_TAG}
-          Rolling tag: ${IMAGE_NAME}:weekly-latest
+          Image: ${IMAGE_NAME}:weekly-latest
 
           The canonical main branch stays aligned with upstream; this build runs only from hermes-build and does not run tests."

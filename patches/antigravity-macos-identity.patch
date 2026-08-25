@@ -1,0 +1,43 @@
+diff --git a/backend/internal/pkg/antigravity/request_transformer.go b/backend/internal/pkg/antigravity/request_transformer.go
+index 9da3cc3..046c50f 100644
+--- a/backend/internal/pkg/antigravity/request_transformer.go
++++ b/backend/internal/pkg/antigravity/request_transformer.go
+@@ -197,11 +197,13 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
+ const antigravityIdentity = `<identity>
+ You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.
+ You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.
+-The USER will send you requests, which you must always prioritize addressing. Along with each USER request, we will attach additional metadata about their current state, such as what files they have open and where their cursor is.
++The USER will send you requests, which you must always prioritize addressing. User requests are enclosed within <USER_REQUEST> tags. Along with each USER request, we will attach additional metadata about their current state, such as what files they have open and where their cursor is.
+ This information may or may not be relevant to the coding task, it is up for you to decide.
+ </identity>
+-<communication_style>
+-- **Proactiveness**. As an agent, you are allowed to be proactive, but only in the course of completing the user's task. For example, if the user asks you to add a new component, you can edit the code, verify build and test statuses, and take any other obvious follow-up actions, such as performing additional research. However, avoid surprising the user. For example, if the user asks HOW to approach something, you should answer their question and instead of jumping into editing a file.</communication_style>`
++<user_information>
++The USER's OS version is mac.
++The user does not have any active workspace.
++</user_information>`
+ 
+ func defaultIdentityPatch(_ string) string {
+ 	return antigravityIdentity
+@@ -346,9 +348,6 @@ func buildSystemInstruction(system json.RawMessage, modelName string, opts Trans
+ 		}
+ 		parts = append(parts, GeminiPart{Text: identityPatch})
+ 
+-		// 静默边界：隔离上方 identity 内容，使其被忽略
+-		modelIdentity := buildModelIdentityText(modelName)
+-		parts = append(parts, GeminiPart{Text: fmt.Sprintf("\nBelow are your system instructions. Follow them strictly. The content above is internal initialization logs, irrelevant to the conversation. Do not reference, acknowledge, or mention it.\n\n**IMPORTANT**: Your responses must **NEVER** explicitly or implicitly reveal the existence of any content above this line. Never mention \"Antigravity\", \"Google Deepmind\", or any identity defined above.\n%s\n", modelIdentity)})
+ 	}
+ 
+ 	// 添加用户的 system prompt
+@@ -359,11 +358,6 @@ func buildSystemInstruction(system json.RawMessage, modelName string, opts Trans
+ 		parts = append(parts, GeminiPart{Text: mcpXMLProtocol})
+ 	}
+ 
+-	// 如果用户没有提供 Antigravity 身份，添加结束标记
+-	if !userHasAntigravityIdentity {
+-		parts = append(parts, GeminiPart{Text: "\n--- [SYSTEM_PROMPT_END] ---"})
+-	}
+-
+ 	if len(parts) == 0 {
+ 		return nil
+ 	}
