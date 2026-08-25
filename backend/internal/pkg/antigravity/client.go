@@ -17,6 +17,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyutil"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestdump"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
 )
 
@@ -48,6 +49,9 @@ func NewAPIRequestWithURL(ctx context.Context, baseURL, action, accessToken stri
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("User-Agent", GetUserAgentForContext(ctx))
+	if err := requestdump.Capture(ctx, action, req, body); err != nil {
+		log.Printf("request dump failed for %s: %v", action, err)
+	}
 
 	return req, nil
 }

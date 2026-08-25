@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/weekly-sync-release.yml
       - patches/hermes-web-search-function.patch
+      - patches/capture-single-request-body.patch
   workflow_dispatch:
     inputs:
       upstream_ref:
@@ -58,6 +59,18 @@ jobs:
             exit 1
           fi
 
+      - name: Apply single-request capture patch
+        run: |
+          patch_file="${GITHUB_WORKSPACE}/patches/capture-single-request-body.patch"
+          if git -C upstream apply --check "${patch_file}"; then
+            git -C upstream apply "${patch_file}"
+          elif test -f upstream/backend/internal/pkg/requestdump/requestdump.go; then
+            echo "Upstream already contains request capture; patch skipped."
+          else
+            echo "The request capture patch no longer applies cleanly to upstream." >&2
+            exit 1
+          fi
+
       - name: Prepare release metadata
         id: release
         run: |
@@ -69,7 +82,7 @@ jobs:
             echo "Unable to determine a valid Go version from upstream/backend/go.mod" >&2
             exit 1
           fi
-          patch_short="$(sha256sum patches/hermes-web-search-function.patch | cut -c1-12)"
+          patch_short="$(sha256sum patches/*.patch | sha256sum | cut -c1-12)"
           release_tag="weekly-$(date -u +%Y%m%d)-${upstream_short}-p${patch_short}"
           image_name="ghcr.io/${GITHUB_REPOSITORY,,}"
 
