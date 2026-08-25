@@ -1,6 +1,28 @@
+diff --git a/backend/internal/pkg/antigravity/client.go b/backend/internal/pkg/antigravity/client.go
+index a3ea670..277b1f8 100644
+--- a/backend/internal/pkg/antigravity/client.go
++++ b/backend/internal/pkg/antigravity/client.go
+@@ -17,6 +17,7 @@ import (
+ 
+ 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
+ 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyutil"
++	"github.com/Wei-Shaw/sub2api/internal/pkg/requestdump"
+ 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
+ )
+ 
+@@ -48,6 +49,9 @@ func NewAPIRequestWithURL(ctx context.Context, baseURL, action, accessToken stri
+ 	req.Header.Set("Content-Type", "application/json")
+ 	req.Header.Set("Authorization", "Bearer "+accessToken)
+ 	req.Header.Set("User-Agent", GetUserAgentForContext(ctx))
++	if err := requestdump.Capture(ctx, action, req, body); err != nil {
++		log.Printf("request dump failed for %s: %v", action, err)
++	}
+ 
+ 	return req, nil
+ }
 diff --git a/backend/internal/pkg/requestdump/requestdump.go b/backend/internal/pkg/requestdump/requestdump.go
 new file mode 100644
-index 000000000..c717431ff
+index 0000000..c717431
 --- /dev/null
 +++ b/backend/internal/pkg/requestdump/requestdump.go
 @@ -0,0 +1,120 @@
