@@ -9,6 +9,7 @@ on:
       - patches/hermes-web-search-function.patch
       - patches/request-dump.patch
       - patches/antigravity-macos-identity.patch
+      - patches/antigravity-client-headers.patch
   workflow_dispatch:
     inputs:
       upstream_ref:
@@ -87,6 +88,20 @@ jobs:
             exit 1
           fi
 
+      - name: Apply Antigravity client headers patch
+        run: |
+          patch_file="${GITHUB_WORKSPACE}/patches/antigravity-client-headers.patch"
+          if git -C upstream apply --check "${patch_file}"; then
+            git -C upstream apply "${patch_file}"
+          elif grep -q 'req.Header.Set("Accept", "\*/\*")' upstream/backend/internal/pkg/antigravity/client.go \
+            && grep -q 'req.Header.Set("X-Client-Name", "antigravity")' upstream/backend/internal/pkg/antigravity/client.go \
+            && grep -q 'req.Header.Set("X-Client-Version", "1.23.2")' upstream/backend/internal/pkg/antigravity/client.go; then
+            echo "Antigravity client headers already present; patch skipped."
+          else
+            echo "The Antigravity client headers patch no longer applies cleanly to upstream." >&2
+            exit 1
+          fi
+
       - name: Prepare release metadata
         id: release
         run: |
@@ -154,7 +169,7 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
             --title "Sub2API ${RELEASE_TAG}" \
-          --notes "Independent upstream build with three upstream-tracking compatibility patches.
+          --notes "Independent upstream build with four upstream-tracking compatibility patches.
 
           Upstream: ${UPSTREAM_REPOSITORY}@${UPSTREAM_SHA}
           Patch: ${PATCH_SHORT}
