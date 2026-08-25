@@ -59,7 +59,7 @@ jobs:
             exit 1
           fi
 
-      - name: Apply single-request capture patch
+      - name: Apply outbound request capture patch
         run: |
           patch_file="${GITHUB_WORKSPACE}/patches/capture-single-request-body.patch"
           if git -C upstream apply --check "${patch_file}"; then

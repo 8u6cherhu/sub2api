@@ -1,4 +1,4 @@
-// Package requestdump provides an opt-in, single-request diagnostic capture.
+// Package requestdump provides an opt-in outbound request diagnostic capture.
 package requestdump
 
 import (
@@ -9,36 +9,27 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
 const (
-	requestIDEnv = "SUB2API_REQUEST_DUMP_REQUEST_ID"
-	dirEnv       = "SUB2API_REQUEST_DUMP_DIR"
-	defaultDir   = "/app/data/request-dumps"
-	maxBodyBytes = 4 << 20
+	enabledEnv = "SUB2API_REQUEST_DUMP_ENABLED"
+	dirEnv     = "SUB2API_REQUEST_DUMP_DIR"
+	defaultDir = "/app/data/request-dumps"
 )
 
-var captured sync.Map
-
-// Capture writes one redacted outbound request when its request ID exactly
-// matches SUB2API_REQUEST_DUMP_REQUEST_ID. An empty setting disables capture.
+// Capture writes every redacted outbound request when
+// SUB2API_REQUEST_DUMP_ENABLED is set to true. Any other value disables it.
 func Capture(ctx context.Context, action string, req *http.Request, body []byte) error {
-	target := strings.TrimSpace(os.Getenv(requestIDEnv))
+	if !strings.EqualFold(strings.TrimSpace(os.Getenv(enabledEnv)), "true") {
+		return nil
+	}
 	requestID, _ := ctx.Value(ctxkey.RequestID).(string)
 	requestID = strings.TrimSpace(requestID)
-	if target == "" || requestID == "" || requestID != target || req == nil {
+	if requestID == "" || req == nil {
 		return nil
-	}
-	key := requestID + "\x00" + action
-	if _, loaded := captured.LoadOrStore(key, struct{}{}); loaded {
-		return nil
-	}
-	if len(body) > maxBodyBytes {
-		body = body[:maxBodyBytes]
 	}
 
 	decoded := any(string(body))
@@ -66,7 +57,7 @@ func Capture(ctx context.Context, action string, req *http.Request, body []byte)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	name := fmt.Sprintf("%s-%s.json", safe(requestID), safe(action))
+	name := fmt.Sprintf("%s-%s-%s.json", safe(requestID), safe(action), time.Now().UTC().Format("20060102T150405.000000000Z"))
 	file, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return err

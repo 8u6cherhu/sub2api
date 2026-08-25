@@ -1,32 +1,10 @@
-diff --git a/backend/internal/pkg/antigravity/client.go b/backend/internal/pkg/antigravity/client.go
-index 785c8af3c..0c3e100bd 100644
---- a/backend/internal/pkg/antigravity/client.go
-+++ b/backend/internal/pkg/antigravity/client.go
-@@ -17,6 +17,7 @@ import (
- 
- 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
- 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyutil"
-+	"github.com/Wei-Shaw/sub2api/internal/pkg/requestdump"
- 	"github.com/Wei-Shaw/sub2api/internal/pkg/servertiming"
- )
- 
-@@ -48,6 +49,9 @@ func NewAPIRequestWithURL(ctx context.Context, baseURL, action, accessToken stri
- 	req.Header.Set("Content-Type", "application/json")
- 	req.Header.Set("Authorization", "Bearer "+accessToken)
- 	req.Header.Set("User-Agent", GetUserAgentForContext(ctx))
-+	if err := requestdump.Capture(ctx, action, req, body); err != nil {
-+		log.Printf("request dump failed for %s: %v", action, err)
-+	}
- 
- 	return req, nil
- }
 diff --git a/backend/internal/pkg/requestdump/requestdump.go b/backend/internal/pkg/requestdump/requestdump.go
 new file mode 100644
-index 000000000..1d156debb
+index 000000000..c717431ff
 --- /dev/null
 +++ b/backend/internal/pkg/requestdump/requestdump.go
-@@ -0,0 +1,129 @@
-+// Package requestdump provides an opt-in, single-request diagnostic capture.
+@@ -0,0 +1,120 @@
++// Package requestdump provides an opt-in outbound request diagnostic capture.
 +package requestdump
 +
 +import (
@@ -37,36 +15,27 @@ index 000000000..1d156debb
 +	"os"
 +	"path/filepath"
 +	"strings"
-+	"sync"
 +	"time"
 +
 +	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 +)
 +
 +const (
-+	requestIDEnv = "SUB2API_REQUEST_DUMP_REQUEST_ID"
-+	dirEnv       = "SUB2API_REQUEST_DUMP_DIR"
-+	defaultDir   = "/app/data/request-dumps"
-+	maxBodyBytes = 4 << 20
++	enabledEnv = "SUB2API_REQUEST_DUMP_ENABLED"
++	dirEnv     = "SUB2API_REQUEST_DUMP_DIR"
++	defaultDir = "/app/data/request-dumps"
 +)
 +
-+var captured sync.Map
-+
-+// Capture writes one redacted outbound request when its request ID exactly
-+// matches SUB2API_REQUEST_DUMP_REQUEST_ID. An empty setting disables capture.
++// Capture writes every redacted outbound request when
++// SUB2API_REQUEST_DUMP_ENABLED is set to true. Any other value disables it.
 +func Capture(ctx context.Context, action string, req *http.Request, body []byte) error {
-+	target := strings.TrimSpace(os.Getenv(requestIDEnv))
++	if !strings.EqualFold(strings.TrimSpace(os.Getenv(enabledEnv)), "true") {
++		return nil
++	}
 +	requestID, _ := ctx.Value(ctxkey.RequestID).(string)
 +	requestID = strings.TrimSpace(requestID)
-+	if target == "" || requestID == "" || requestID != target || req == nil {
++	if requestID == "" || req == nil {
 +		return nil
-+	}
-+	key := requestID + "\x00" + action
-+	if _, loaded := captured.LoadOrStore(key, struct{}{}); loaded {
-+		return nil
-+	}
-+	if len(body) > maxBodyBytes {
-+		body = body[:maxBodyBytes]
 +	}
 +
 +	decoded := any(string(body))
@@ -94,7 +63,7 @@ index 000000000..1d156debb
 +	if err := os.MkdirAll(dir, 0700); err != nil {
 +		return err
 +	}
-+	name := fmt.Sprintf("%s-%s.json", safe(requestID), safe(action))
++	name := fmt.Sprintf("%s-%s-%s.json", safe(requestID), safe(action), time.Now().UTC().Format("20060102T150405.000000000Z"))
 +	file, err := os.OpenFile(filepath.Join(dir, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 +	if err != nil {
 +		return err
