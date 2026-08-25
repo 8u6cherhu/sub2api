@@ -7,7 +7,7 @@ on:
     paths:
       - .github/workflows/weekly-sync-release.yml
       - patches/hermes-web-search-function.patch
-      - patches/capture-single-request-body.patch
+      - patches/request-dump.patch
       - patches/antigravity-macos-identity.patch
   workflow_dispatch:
     inputs:
@@ -16,7 +16,7 @@ on:
         required: false
         default: main
   schedule:
-    - cron: "17 4 * * 1"
+    - cron: "17 4 * * 1,4"
 
 permissions:
   contents: write
@@ -60,13 +60,14 @@ jobs:
             exit 1
           fi
 
-      - name: Apply outbound request capture patch
+      - name: Apply continuous request dump patch
         run: |
-          patch_file="${GITHUB_WORKSPACE}/patches/capture-single-request-body.patch"
+          patch_file="${GITHUB_WORKSPACE}/patches/request-dump.patch"
           if git -C upstream apply --check "${patch_file}"; then
             git -C upstream apply "${patch_file}"
-          elif test -f upstream/backend/internal/pkg/requestdump/requestdump.go; then
-            echo "Upstream already contains request capture; patch skipped."
+          elif grep -q 'SUB2API_REQUEST_DUMP_ENABLED' upstream/backend/internal/pkg/requestdump/requestdump.go \
+            && grep -q 'requestdump.Capture' upstream/backend/internal/pkg/antigravity/client.go; then
+            echo "Upstream already contains continuous request dump; patch skipped."
           else
             echo "The request capture patch no longer applies cleanly to upstream." >&2
             exit 1
@@ -126,7 +127,9 @@ jobs:
           file: upstream/Dockerfile
           platforms: linux/amd64
           push: true
-          tags: ${{ steps.release.outputs.image_name }}:weekly-latest
+          tags: |
+            ${{ steps.release.outputs.image_name }}:weekly-latest
+            ${{ steps.release.outputs.image_name }}:${{ steps.release.outputs.tag }}
           build-args: |
             GOLANG_IMAGE=golang:${{ steps.release.outputs.go_version }}-alpine
             VERSION=${{ steps.release.outputs.version }}
@@ -151,10 +154,37 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
             --title "Sub2API ${RELEASE_TAG}" \
-            --notes "Independent upstream build with the minimal Hermes web_search compatibility patch.
+          --notes "Independent upstream build with three upstream-tracking compatibility patches.
 
           Upstream: ${UPSTREAM_REPOSITORY}@${UPSTREAM_SHA}
           Patch: ${PATCH_SHORT}
           Image: ${IMAGE_NAME}:weekly-latest
 
           The canonical main branch stays aligned with upstream; this build runs only from hermes-build and does not run tests."
+
+      - name: Retain the five newest releases and images
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_NAME: ${{ steps.release.outputs.image_name }}
+        run: |
+          mapfile -t old_releases < <(
+            gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 --json tagName,createdAt \
+              --jq 'map(select(.tagName | startswith("weekly-"))) | sort_by(.createdAt) | reverse | .[5:] | .[].tagName'
+          )
+          for tag in "${old_releases[@]}"; do
+            [ -n "${tag}" ] || continue
+            gh release delete "${tag}" --repo "${GITHUB_REPOSITORY}" --yes --cleanup-tag
+          done
+
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          mapfile -t old_versions < <(
+            gh api --paginate --slurp \
+              "/users/${owner}/packages/container/sub2api/versions?per_page=100" \
+              | jq -r 'add | sort_by(.created_at) | reverse | .[5:] | .[].id'
+          )
+          for version_id in "${old_versions[@]}"; do
+            [ -n "${version_id}" ] || continue
+            gh api --method DELETE \
+              "/users/${owner}/packages/container/sub2api/versions/${version_id}"
+          done
