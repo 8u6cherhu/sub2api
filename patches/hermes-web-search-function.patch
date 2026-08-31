@@ -14,8 +14,21 @@ index 26b307bb..afe95300 100644
  }
  
  // GetUserAgentForContext 返回当前请求应使用的 User-Agent。
+diff --git a/backend/internal/pkg/antigravity/oauth_test.go b/backend/internal/pkg/antigravity/oauth_test.go
+index 7849492c..6de90d60 100644
+--- a/backend/internal/pkg/antigravity/oauth_test.go
++++ b/backend/internal/pkg/antigravity/oauth_test.go
+@@ -693,7 +693,7 @@ func TestConstants_值正确(t *testing.T) {
+ 	if RedirectURI != "http://localhost:8085/callback" {
+ 		t.Errorf("RedirectURI 不匹配: got %s", RedirectURI)
+ 	}
+-	if GetUserAgent() != "antigravity/1.23.2 windows/amd64" {
++	if GetUserAgent() != "antigravity/1.23.2 darwin/arm64" {
+ 		t.Errorf("UserAgent 不匹配: got %s", GetUserAgent())
+ 	}
+ 	if SessionTTL != 30*time.Minute {
 diff --git a/backend/internal/pkg/antigravity/request_transformer.go b/backend/internal/pkg/antigravity/request_transformer.go
-index 9da3cc33..802ca228 100644
+index 819db987..69a11aa9 100644
 --- a/backend/internal/pkg/antigravity/request_transformer.go
 +++ b/backend/internal/pkg/antigravity/request_transformer.go
 @@ -54,9 +54,6 @@ func DefaultTransformOptions() TransformOptions {
@@ -38,22 +51,24 @@ index 9da3cc33..802ca228 100644
  	}
  
  	// 检测是否启用 thinking
-@@ -731,14 +725,9 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
+@@ -735,7 +729,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
  		return nil
  	}
  
 -	hasWebSearch := hasWebSearchTool(tools)
--
+ 	hasCodeExecution := false
+ 	for _, tool := range tools {
+ 		if isCodeExecutionTool(tool) {
+@@ -747,7 +740,7 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
  	// 普通工具
  	var funcDecls []GeminiFunctionDecl
  	for _, tool := range tools {
--		if isWebSearchTool(tool) {
--			continue
--		}
+-		if isWebSearchTool(tool) || isCodeExecutionTool(tool) {
++		if isCodeExecutionTool(tool) {
+ 			continue
+ 		}
  		// 跳过无效工具名称
- 		if strings.TrimSpace(tool.Name) == "" {
- 			log.Printf("Warning: skipping tool with empty name")
-@@ -789,17 +778,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
+@@ -800,17 +793,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
  			FunctionDeclarations: funcDecls,
  		})
  	}
@@ -68,6 +83,58 @@ index 9da3cc33..802ca228 100644
 -			},
 -		})
 -	}
- 	if len(declarations) == 0 {
- 		return nil
+ 	if hasCodeExecution {
+ 		declarations = append(declarations, GeminiToolDeclaration{
+ 			CodeExecution: &GeminiCodeExecution{},
+diff --git a/backend/internal/pkg/antigravity/request_transformer_test.go b/backend/internal/pkg/antigravity/request_transformer_test.go
+index 05764ef7..d6a8feda 100644
+--- a/backend/internal/pkg/antigravity/request_transformer_test.go
++++ b/backend/internal/pkg/antigravity/request_transformer_test.go
+@@ -277,13 +277,10 @@ func TestBuildTools_PreservesWebSearchAlongsideFunctions(t *testing.T) {
  	}
+ 
+ 	result := buildTools(tools)
+-	require.Len(t, result, 2)
+-	require.Len(t, result[0].FunctionDeclarations, 1)
++	require.Len(t, result, 1)
++	require.Len(t, result[0].FunctionDeclarations, 2)
+ 	require.Equal(t, "get_weather", result[0].FunctionDeclarations[0].Name)
+-	require.NotNil(t, result[1].GoogleSearch)
+-	require.NotNil(t, result[1].GoogleSearch.EnhancedContent)
+-	require.NotNil(t, result[1].GoogleSearch.EnhancedContent.ImageSearch)
+-	require.Equal(t, 5, result[1].GoogleSearch.EnhancedContent.ImageSearch.MaxResultCount)
++	require.Equal(t, "web_search", result[0].FunctionDeclarations[1].Name)
+ }
+ 
+ func TestBuildGenerationConfig_ThinkingDynamicBudget(t *testing.T) {
+@@ -560,10 +557,10 @@ func TestTransformClaudeToGeminiWithOptions_PreservesWebSearchAlongsideFunctions
+ 
+ 	var req V1InternalRequest
+ 	require.NoError(t, json.Unmarshal(body, &req))
+-	require.Len(t, req.Request.Tools, 2)
+-	require.Len(t, req.Request.Tools[0].FunctionDeclarations, 1)
++	require.Len(t, req.Request.Tools, 1)
++	require.Len(t, req.Request.Tools[0].FunctionDeclarations, 2)
+ 	require.Equal(t, "get_weather", req.Request.Tools[0].FunctionDeclarations[0].Name)
+-	require.NotNil(t, req.Request.Tools[1].GoogleSearch)
++	require.Equal(t, "web_search", req.Request.Tools[0].FunctionDeclarations[1].Name)
+ }
+ 
+ func TestGeminiToolConfig_IncludeServerSideToolInvocations(t *testing.T) {
+@@ -596,13 +593,12 @@ func TestGeminiToolConfig_IncludeServerSideToolInvocations(t *testing.T) {
+ 		return req, string(body)
+ 	}
+ 
+-	t.Run("mixed builtin and function tools enable server-side tool invocations", func(t *testing.T) {
++	t.Run("web search function is not a server-side tool invocation", func(t *testing.T) {
+ 		req, raw := transform(t, []ClaudeTool{functionTool, webSearchTool})
+ 
+ 		require.NotNil(t, req.Request.ToolConfig)
+-		require.NotNil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
+-		require.True(t, *req.Request.ToolConfig.IncludeServerSideToolInvocations)
+-		require.Contains(t, raw, `"includeServerSideToolInvocations":true`)
++		require.Nil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
++		require.NotContains(t, raw, "includeServerSideToolInvocations")
+ 	})
+ 
+ 	t.Run("function tools only leave the flag unset", func(t *testing.T) {
