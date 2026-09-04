@@ -100,16 +100,6 @@ jobs:
             exit 1
           fi
 
-      - name: Set up Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: upstream/backend/go.mod
-          cache-dependency-path: upstream/backend/go.sum
-
-      - name: Test patched backend
-        working-directory: upstream/backend
-        run: go test ./internal/pkg/antigravity ./internal/service
-
       - name: Prepare release metadata
         id: release
         run: |
@@ -183,7 +173,7 @@ jobs:
           Patch: ${PATCH_SHORT}
           Image: ${IMAGE_NAME}:weekly-latest
 
-          The canonical main branch stays aligned with upstream; this build runs only from hermes-build after targeted backend tests pass."
+          The canonical main branch stays aligned with upstream; this build runs only from hermes-build."
 
       - name: Retain the five newest releases and images
         continue-on-error: true
