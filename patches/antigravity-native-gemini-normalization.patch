@@ -1,0 +1,112 @@
+diff --git a/backend/internal/service/antigravity_gateway_gemini.go b/backend/internal/service/antigravity_gateway_gemini.go
+index 7538921..b8a8a27 100644
+--- a/backend/internal/service/antigravity_gateway_gemini.go
++++ b/backend/internal/service/antigravity_gateway_gemini.go
+@@ -47,6 +47,9 @@ func (s *AntigravityGatewayService) HandleGeminiRequest(c *gin.Context, account
+ 	if injectedBody, err = injectIdentityPatchToGeminiRequest(injectedBody, model); err != nil {
+ 		return nil, s.writeGoogleError(c, http.StatusBadRequest, "Invalid request body")
+ 	}
++	if injectedBody, err = normalizeGeminiRequestForAntigravity(injectedBody); err != nil {
++		return nil, s.writeGoogleError(c, http.StatusBadRequest, "Invalid request body")
++	}
+ 
+ 	stream := action == "streamGenerateContent"
+ 	endpoint := "/v1internal:" + action
+diff --git a/backend/internal/service/antigravity_gateway_service.go b/backend/internal/service/antigravity_gateway_service.go
+index 401a0f1..55b1444 100644
+--- a/backend/internal/service/antigravity_gateway_service.go
++++ b/backend/internal/service/antigravity_gateway_service.go
+@@ -1953,6 +1953,49 @@ func injectIdentityPatchToGeminiRequest(body []byte, modelName string) ([]byte,
+ 	return json.Marshal(req)
+ }
+ 
++// normalizeGeminiRequestForAntigravity adapts standard Gemini JSON to v1internal.
++func normalizeGeminiRequestForAntigravity(body []byte) ([]byte, error) {
++	var request map[string]any
++	if err := json.Unmarshal(body, &request); err != nil {
++		return nil, err
++	}
++
++	modified := false
++	if contents, ok := request["contents"].([]any); ok {
++		for _, raw := range contents {
++			content, ok := raw.(map[string]any)
++			if !ok {
++				continue
++			}
++			role, exists := content["role"]
++			if !exists || role == nil {
++				content["role"] = "user"
++				modified = true
++				continue
++			}
++			if roleString, ok := role.(string); ok && strings.TrimSpace(roleString) == "" {
++				content["role"] = "user"
++				modified = true
++			}
++		}
++	}
++
++	if tools, ok := request["tools"].([]any); ok {
++		for _, raw := range tools {
++			tool, ok := raw.(map[string]any)
++			if !ok {
++				continue
++			}
++			search, exists := tool["google_search"]
++			if !exists {
++				continue
++			}
++			if _, exists := tool["googleSearch"]; !exists {
++				tool["googleSearch"] = search
++			}
++			delete(tool, "google_search")
++			modified = true
++		}
++	}
++
++	if !modified {
++		return body, nil
++	}
++	return json.Marshal(request)
++}
++
+ func removeUnsupportedParamsForGemini(body []byte) ([]byte, error) {
+ 	var req map[string]any
+ 	if err := json.Unmarshal(body, &req); err != nil {
+diff --git a/backend/internal/service/antigravity_gateway_service_test.go b/backend/internal/service/antigravity_gateway_service_test.go
+index b30ac83..2c620df 100644
+--- a/backend/internal/service/antigravity_gateway_service_test.go
++++ b/backend/internal/service/antigravity_gateway_service_test.go
+@@ -1417,6 +1417,25 @@ func TestRemoveUnsupportedParamsForGemini(t *testing.T) {
+ 	}
+ }
+ 
++func TestNormalizeGeminiRequestForAntigravity(t *testing.T) {
++	body := []byte("{\"contents\":[{\"parts\":[{\"text\":\"hello\"}]},{\"role\":\"model\",\"parts\":[]}],\"tools\":[{\"google_search\":{}},{\"google_search\":{\"x\":1},\"googleSearch\":{\"kept\":true}}]}")
++	got, err := normalizeGeminiRequestForAntigravity(body)
++	if err != nil {
++		t.Fatal(err)
++	}
++	var request map[string]any
++	if err := json.Unmarshal(got, &request); err != nil {
++		t.Fatal(err)
++	}
++	contents := request["contents"].([]any)
++	if contents[0].(map[string]any)["role"] != "user" || contents[1].(map[string]any)["role"] != "model" {
++		t.Fatalf("unexpected contents: %#v", contents)
++	}
++	tools := request["tools"].([]any)
++	for _, raw := range tools {
++		if _, exists := raw.(map[string]any)["google_search"]; exists {
++			t.Fatalf("google_search was not removed: %#v", tools)
++		}
++	}
++	if tools[1].(map[string]any)["googleSearch"].(map[string]any)["kept"] != true {
++		t.Fatalf("existing googleSearch was overwritten: %#v", tools[1])
++	}
++}
++
+ func TestMergeSystemInstruction(t *testing.T) {
+ 	tests := []struct {
+ 		name     string
