@@ -1,16 +1,7 @@
 diff --git a/backend/internal/pkg/antigravity/oauth.go b/backend/internal/pkg/antigravity/oauth.go
-index 26b307b..452ee4e 100644
+index 625dcae..452ee4e 100644
 --- a/backend/internal/pkg/antigravity/oauth.go
 +++ b/backend/internal/pkg/antigravity/oauth.go
-@@ -34,7 +34,7 @@ const (
- 	AntigravityUserAgentVersionEnv = "ANTIGRAVITY_USER_AGENT_VERSION"
- 
- 	// DefaultUserAgentVersion 是未通过环境变量或后台设置覆盖时使用的默认版本号。
--	DefaultUserAgentVersion = "1.23.2"
-+	DefaultUserAgentVersion = "2.9.1"
- 
- 	// 固定的 redirect_uri（用户需手动复制 code）
- 	RedirectURI = "http://localhost:8085/callback"
 @@ -122,10 +122,16 @@ func GetUserAgentVersionForContext(ctx context.Context) string {
  
  // BuildUserAgent 使用指定版本号构造 User-Agent；版本为空或非法时回退默认值。
@@ -31,42 +22,8 @@ index 26b307b..452ee4e 100644
  }
  
  // GetUserAgentForContext 返回当前请求应使用的 User-Agent。
-diff --git a/backend/internal/pkg/antigravity/oauth_test.go b/backend/internal/pkg/antigravity/oauth_test.go
-index 7849492..bcac620 100644
---- a/backend/internal/pkg/antigravity/oauth_test.go
-+++ b/backend/internal/pkg/antigravity/oauth_test.go
-@@ -693,7 +693,7 @@ func TestConstants_值正确(t *testing.T) {
- 	if RedirectURI != "http://localhost:8085/callback" {
- 		t.Errorf("RedirectURI 不匹配: got %s", RedirectURI)
- 	}
--	if GetUserAgent() != "antigravity/1.23.2 windows/amd64" {
-+	if GetUserAgent() != "antigravity/hub/2.9.1 darwin/arm64" {
- 		t.Errorf("UserAgent 不匹配: got %s", GetUserAgent())
- 	}
- 	if SessionTTL != 30*time.Minute {
-@@ -704,6 +704,20 @@ func TestConstants_值正确(t *testing.T) {
- 	}
- }
- 
-+func TestBuildUserAgent_HubVersionBoundary(t *testing.T) {
-+	tests := map[string]string{
-+		"2.9.0":  "antigravity/2.9.0 darwin/arm64",
-+		"2.9.1":  "antigravity/hub/2.9.1 darwin/arm64",
-+		"2.10.0": "antigravity/hub/2.10.0 darwin/arm64",
-+		"3.0.0":  "antigravity/hub/3.0.0 darwin/arm64",
-+	}
-+	for version, want := range tests {
-+		if got := BuildUserAgent(version); got != want {
-+			t.Errorf("BuildUserAgent(%q) = %q, want %q", version, got, want)
-+		}
-+	}
-+}
-+
- func TestScopes_包含必要范围(t *testing.T) {
- 	expectedScopes := []string{
- 		"https://www.googleapis.com/auth/cloud-platform",
 diff --git a/backend/internal/pkg/antigravity/request_transformer.go b/backend/internal/pkg/antigravity/request_transformer.go
-index 1750848..1ec4db5 100644
+index 192c4cd..84f847f 100644
 --- a/backend/internal/pkg/antigravity/request_transformer.go
 +++ b/backend/internal/pkg/antigravity/request_transformer.go
 @@ -54,9 +54,6 @@ func DefaultTransformOptions() TransformOptions {
@@ -79,9 +36,19 @@ index 1750848..1ec4db5 100644
  // MaxTokensBudgetPadding max_tokens 自动调整时在 budget_tokens 基础上增加的额度
  // Claude API 要求 max_tokens > thinking.budget_tokens，否则返回 400 错误
  const MaxTokensBudgetPadding = 1000
-@@ -94,9 +91,6 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
+@@ -88,18 +85,11 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
+ 	// 用于存储 tool_use id -> name 映射
+ 	toolIDToName := make(map[string]string)
+ 
+-	// 仅在「只有内置 web_search、没有客户端 function tools」时走 web_search 降级模型。
+-	// Antigravity v1internal 不支持内置工具与 functionDeclarations 混用（即使设置
+-	// includeServerSideToolInvocations 仍会 400，见 issue #6464），混用时会丢弃内置搜索，
+-	// 因此不能再强制切到 gemini-2.5-flash，否则 Codex 等带 shell 工具的请求会整单失败。
+-	useWebSearchRequest := hasWebSearchTool(claudeReq.Tools) && !hasClientFunctionTools(claudeReq.Tools)
++	useWebSearchRequest := hasWebSearchTool(claudeReq.Tools)
+ 	requestType := "agent"
  	targetModel := mappedModel
- 	if hasWebSearchTool {
+ 	if useWebSearchRequest {
  		requestType = "web_search"
 -		if targetModel != webSearchFallbackModel {
 -			targetModel = webSearchFallbackModel
@@ -89,7 +56,7 @@ index 1750848..1ec4db5 100644
  	}
  
  	// 检测是否启用 thinking
-@@ -736,7 +730,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
+@@ -731,7 +721,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
  		return nil
  	}
  
@@ -97,7 +64,7 @@ index 1750848..1ec4db5 100644
  	hasCodeExecution := false
  	for _, tool := range tools {
  		if isCodeExecutionTool(tool) {
-@@ -748,7 +741,7 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
+@@ -743,7 +732,7 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
  	// 普通工具
  	var funcDecls []GeminiFunctionDecl
  	for _, tool := range tools {
@@ -106,7 +73,25 @@ index 1750848..1ec4db5 100644
  			continue
  		}
  		// 跳过无效工具名称
-@@ -801,17 +794,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
+@@ -790,15 +779,10 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
+ 		})
+ 	}
+ 
+-	// Antigravity v1internal 协议不支持内置工具与 functionDeclarations 混用：
+-	// 即便带上 includeServerSideToolInvocations 仍返回 400（issue #6464）。
+-	// Codex 默认同时带 web_search 与 shell 等客户端工具，优先保留客户端工具，
+-	// 使代理会话可继续，而不是整单 upstream_error。
+ 	if len(funcDecls) > 0 {
+-		if hasWebSearch || hasCodeExecution {
+-			log.Printf("[antigravity] dropping built-in tools (web_search/code_execution) because client function tools are present; Antigravity v1internal rejects the mix")
++		if hasCodeExecution {
++			log.Printf("[antigravity] dropping built-in code_execution because function tools are present; Antigravity v1internal rejects the mix")
+ 		}
+-		hasWebSearch = false
+ 		hasCodeExecution = false
+ 	}
+ 
+@@ -808,17 +792,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
  			FunctionDeclarations: funcDecls,
  		})
  	}
@@ -124,55 +109,3 @@ index 1750848..1ec4db5 100644
  	if hasCodeExecution {
  		declarations = append(declarations, GeminiToolDeclaration{
  			CodeExecution: &GeminiCodeExecution{},
-diff --git a/backend/internal/pkg/antigravity/request_transformer_test.go b/backend/internal/pkg/antigravity/request_transformer_test.go
-index 05764ef..d6a8fed 100644
---- a/backend/internal/pkg/antigravity/request_transformer_test.go
-+++ b/backend/internal/pkg/antigravity/request_transformer_test.go
-@@ -277,13 +277,10 @@ func TestBuildTools_PreservesWebSearchAlongsideFunctions(t *testing.T) {
- 	}
- 
- 	result := buildTools(tools)
--	require.Len(t, result, 2)
--	require.Len(t, result[0].FunctionDeclarations, 1)
-+	require.Len(t, result, 1)
-+	require.Len(t, result[0].FunctionDeclarations, 2)
- 	require.Equal(t, "get_weather", result[0].FunctionDeclarations[0].Name)
--	require.NotNil(t, result[1].GoogleSearch)
--	require.NotNil(t, result[1].GoogleSearch.EnhancedContent)
--	require.NotNil(t, result[1].GoogleSearch.EnhancedContent.ImageSearch)
--	require.Equal(t, 5, result[1].GoogleSearch.EnhancedContent.ImageSearch.MaxResultCount)
-+	require.Equal(t, "web_search", result[0].FunctionDeclarations[1].Name)
- }
- 
- func TestBuildGenerationConfig_ThinkingDynamicBudget(t *testing.T) {
-@@ -560,10 +557,10 @@ func TestTransformClaudeToGeminiWithOptions_PreservesWebSearchAlongsideFunctions
- 
- 	var req V1InternalRequest
- 	require.NoError(t, json.Unmarshal(body, &req))
--	require.Len(t, req.Request.Tools, 2)
--	require.Len(t, req.Request.Tools[0].FunctionDeclarations, 1)
-+	require.Len(t, req.Request.Tools, 1)
-+	require.Len(t, req.Request.Tools[0].FunctionDeclarations, 2)
- 	require.Equal(t, "get_weather", req.Request.Tools[0].FunctionDeclarations[0].Name)
--	require.NotNil(t, req.Request.Tools[1].GoogleSearch)
-+	require.Equal(t, "web_search", req.Request.Tools[0].FunctionDeclarations[1].Name)
- }
- 
- func TestGeminiToolConfig_IncludeServerSideToolInvocations(t *testing.T) {
-@@ -596,13 +593,12 @@ func TestGeminiToolConfig_IncludeServerSideToolInvocations(t *testing.T) {
- 		return req, string(body)
- 	}
- 
--	t.Run("mixed builtin and function tools enable server-side tool invocations", func(t *testing.T) {
-+	t.Run("web search function is not a server-side tool invocation", func(t *testing.T) {
- 		req, raw := transform(t, []ClaudeTool{functionTool, webSearchTool})
- 
- 		require.NotNil(t, req.Request.ToolConfig)
--		require.NotNil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
--		require.True(t, *req.Request.ToolConfig.IncludeServerSideToolInvocations)
--		require.Contains(t, raw, `"includeServerSideToolInvocations":true`)
-+		require.Nil(t, req.Request.ToolConfig.IncludeServerSideToolInvocations)
-+		require.NotContains(t, raw, "includeServerSideToolInvocations")
- 	})
- 
- 	t.Run("function tools only leave the flag unset", func(t *testing.T) {
