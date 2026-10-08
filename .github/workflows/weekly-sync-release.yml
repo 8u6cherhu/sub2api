@@ -182,8 +182,8 @@ jobs:
           IMAGE_NAME: ${{ steps.release.outputs.image_name }}
         run: |
           mapfile -t old_releases < <(
-            gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 --json tagName,createdAt \
-              --jq 'map(select(.tagName | startswith("weekly-"))) | sort_by(.createdAt) | reverse | .[5:] | .[].tagName'
+            gh release list --repo "${GITHUB_REPOSITORY}" --limit 100 --json tagName,publishedAt \
+              --jq 'map(select(.tagName | startswith("weekly-"))) | sort_by(.publishedAt) | reverse | .[5:] | .[].tagName'
           )
           for tag in "${old_releases[@]}"; do
             [ -n "${tag}" ] || continue
