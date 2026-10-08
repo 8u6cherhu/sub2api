@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Select from '@/components/common/Select.vue'
+import { CONCRETE_PLATFORM_OPTIONS } from '@/constants/platforms'
 import HelpTooltip from '@/components/common/HelpTooltip.vue'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import Icon from '@/components/icons/Icon.vue'
@@ -109,11 +110,7 @@ const groups = ref<Array<{ id: number; name: string; platform: string }>>([])
 
 const platformOptions = computed(() => [
   { value: '', label: t('common.all') },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'anthropic', label: 'Anthropic' },
-  { value: 'gemini', label: 'Gemini' },
-  { value: 'antigravity', label: 'Antigravity' },
-  { value: 'grok', label: 'Grok' }
+  ...CONCRETE_PLATFORM_OPTIONS
 ])
 
 const timeRangeOptions = computed(() => [
@@ -394,6 +391,7 @@ const tpsAvgLabel = computed(() => {
 const slaPercent = computed(() => {
   const v = overview.value?.sla
   if (typeof v !== 'number') return null
+  if ((overview.value?.request_count_sla ?? 0) <= 0) return null
   return v * 100
 })
 
@@ -1272,7 +1270,7 @@ function handleToolbarRefresh() {
           <div class="mt-3 text-xs">
             <div class="flex justify-between">
               <span class="text-gray-500">{{ t('admin.ops.exceptions') }}:</span>
-              <span class="font-bold text-red-600 dark:text-red-400">{{ formatNumber((overview.request_count_sla ?? 0) - (overview.success_count ?? 0)) }}</span>
+              <span class="font-bold text-gray-900 dark:text-white">{{ formatNumber((overview.request_count_sla ?? 0) - (overview.success_count ?? 0)) }}</span>
             </div>
           </div>
         </div>
@@ -1339,7 +1337,7 @@ function handleToolbarRefresh() {
               v-if="!props.fullscreen"
               class="text-[10px] font-bold text-blue-500 hover:underline"
               type="button"
-              @click="openDetails({ title: t('admin.ops.ttftLabel'), sort: 'duration_desc' })"
+              @click="openDetails({ title: t('admin.ops.ttftLabel'), kind: 'success', sort: 'ttft_desc' })"
             >
               {{ t('admin.ops.requestDetails.details') }}
             </button>
@@ -1428,6 +1426,28 @@ function handleToolbarRefresh() {
               <span class="text-gray-500">429/529:</span>
               <span class="font-bold text-gray-900 dark:text-white">{{ formatNumber((overview.upstream_429_count ?? 0) + (overview.upstream_529_count ?? 0)) }}</span>
             </div>
+          </div>
+        </div>
+
+        <!-- Per-request output speed, separate from system throughput. -->
+        <div class="rounded-2xl bg-gray-50 p-4 dark:bg-dark-900" data-testid="output-tps-card" style="order: 7;">
+          <div class="flex items-center gap-1">
+            <span class="text-[10px] font-bold uppercase text-gray-400">{{ t('admin.ops.outputTps') }}</span>
+            <HelpTooltip v-if="!props.fullscreen" :content="t('admin.ops.tooltips.outputTps')" />
+          </div>
+          <div class="mt-2 flex flex-wrap items-baseline gap-2">
+            <div class="text-3xl font-black text-gray-900 dark:text-white" data-testid="output-tps-p50">{{ overview.output_tps?.p50?.toFixed(1) ?? '—' }}</div>
+            <span class="text-xs font-bold text-gray-400">tok/s (P50)</span>
+          </div>
+          <div class="mt-3 grid grid-cols-1 gap-x-3 gap-y-1 text-xs 2xl:grid-cols-2">
+            <div v-for="metric in ['p5', 'p10', 'avg'] as const" :key="metric" class="flex items-baseline gap-1 whitespace-nowrap">
+              <span class="text-gray-500">{{ metric === 'avg' ? 'Avg' : metric.toUpperCase() }}:</span>
+              <span class="font-bold text-gray-900 dark:text-white" :data-testid="`output-tps-${metric}`">{{ overview.output_tps?.[metric]?.toFixed(1) ?? '—' }}</span>
+              <span class="text-gray-400">tok/s</span>
+            </div>
+          </div>
+          <div class="mt-2 text-xs text-gray-500" data-testid="output-tps-samples">
+            {{ t('admin.ops.outputTpsSamples', { count: overview.output_tps == null ? '—' : formatNumber(overview.output_tps.sample_count) }) }}
           </div>
         </div>
       </div>

@@ -4,6 +4,9 @@ name: Weekly upstream build and release
 # maintained Hermes patches exactly. If any patch no longer applies cleanly,
 # fail the workflow so the patch can be reviewed and rebased; never silently
 # accept partial or approximate upstream behavior.
+# The fork branches are synchronized with upstream main. Hermes changes live
+# in patches/, not in the checked-in upstream source; builds apply them once
+# to a fresh upstream checkout.
 
 on:
   push:
@@ -157,7 +160,8 @@ jobs:
           Image: ${IMAGE_NAME}:weekly-latest
 
           Every build starts from the latest Wei-Shaw/sub2api main, then applies the four maintained patches.
-          The hermes-build branch is used only for the workflow and patches; its ahead/behind count is not the source revision."
+          The fork branches track upstream main. Hermes changes are maintained as patches and applied once to a fresh upstream checkout.
+          The upstream SHA above identifies the source used for this image."
 
       - name: Retain the five newest releases and images
         continue-on-error: true

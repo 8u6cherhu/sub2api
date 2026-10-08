@@ -202,7 +202,53 @@ func (e *EasyPay) createAPIPayment(ctx context.Context, req payment.CreatePaymen
 	if req.IsMobile && resp.PayURL2 != "" {
 		payURL = resp.PayURL2
 	}
-	return &payment.CreatePaymentResponse{TradeNo: resp.TradeNo, PayURL: payURL, QRCode: resp.QRCode}, nil
+	base := e.apiBase()
+	return &payment.CreatePaymentResponse{
+		TradeNo: resp.TradeNo,
+		PayURL:  resolveEasyPayReturnedRef(base, payURL),
+		QRCode:  resolveEasyPayReturnedRef(base, resp.QRCode),
+	}, nil
+}
+
+// resolveEasyPayReturnedRef absolutizes a payurl/payurl2/qrcode reference that
+// mapi.php returned, resolving it against the instance's configured apiBase.
+//
+// EasyPay-compatible upstreams disagree on this field: some answer with a full
+// checkout URL, others with a site-root-relative path such as
+// "/api/pay/toapp/<order>". createRedirectPayment already builds an absolute URL
+// itself (apiBase + "/submit.php?..."), but the mapi.php branch stored whatever
+// came back verbatim, and nothing downstream repairs it —
+// sanitizeCreatePaymentResponseDetails only strips NUL bytes before the value is
+// persisted to pay_url/qr_code. The frontend then feeds qr_code straight into
+// QRCode.toCanvas (PaymentQRCodeView.renderQR), so a relative path becomes a QR
+// whose payload is a bare path: WeChat renders it as text, and pay_url resolves
+// against the gateway's own domain and 404s.
+//
+// That is precisely the outcome the Alipay provider already refuses to produce —
+// "Setting it as QRCode would let the frontend render an unscannable image"
+// (createPagePayTrade) — so EasyPay is brought in line with the same rule.
+//
+// Only references beginning with "/" are resolved. Anything carrying a scheme is
+// already actionable and is returned untouched, which covers both absolute
+// https:// checkout URLs and app deep links (weixin://, wxp://, alipays://). A
+// reference without a leading slash is left alone as well: QR payloads are
+// frequently opaque tokens rather than paths, and rewriting "OrderToken123" into
+// "<apiBase>/OrderToken123" would break a payload that works today — strictly
+// worse than the bug this fixes.
+func resolveEasyPayReturnedRef(apiBase, ref string) string {
+	trimmed := strings.TrimSpace(ref)
+	if !strings.HasPrefix(trimmed, "/") {
+		return ref
+	}
+	base, err := url.Parse(strings.TrimSpace(apiBase))
+	if err != nil || base.Scheme == "" || base.Host == "" {
+		return ref
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme != "" {
+		return ref
+	}
+	return base.ResolveReference(parsed).String()
 }
 
 // resolveURLs returns (notifyURL, returnURL) preferring request values,
@@ -330,6 +376,9 @@ func (e *EasyPay) VerifyNotification(_ context.Context, rawBody string, _ map[st
 	// url.ParseQuery already decodes values — no additional decode needed.
 	params := make(map[string]string)
 	for k := range values {
+		if !easyPayNotifyAllowedParams[k] {
+			return nil, fmt.Errorf("unexpected notify param: %s", k)
+		}
 		params[k] = values.Get(k)
 	}
 	sign := params["sign"]
@@ -554,4 +603,27 @@ func easyPaySign(params map[string]string, pkey string) string {
 
 func easyPayVerifySign(params map[string]string, pkey string, sign string) bool {
 	return hmac.Equal([]byte(easyPaySign(params, pkey)), []byte(sign))
+}
+
+// easyPayNotifyAllowedParams is the exact parameter set a genuine EasyPay
+// (彩虹易支付-compatible) async notification carries. Order-creation-only
+// fields (notify_url, return_url, cid, device, clientip, ...) must never
+// appear in a callback: because the sign base string concatenates values
+// unescaped, a signed order URL whose return_url embeds e.g.
+// "trade_status=TRADE_SUCCESS" could otherwise be replayed as a forged
+// payment-success notification (issue #7881). Rejecting unknown keys closes
+// the whole smuggling class; genuinely paid orders rejected by an exotic
+// upstream variant are still recovered by the upstream QueryOrder reconcile
+// path.
+var easyPayNotifyAllowedParams = map[string]bool{
+	"pid":          true,
+	"trade_no":     true,
+	"out_trade_no": true,
+	"type":         true,
+	"name":         true,
+	"money":        true,
+	"trade_status": true,
+	"param":        true,
+	"sign":         true,
+	"sign_type":    true,
 }

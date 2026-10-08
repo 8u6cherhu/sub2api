@@ -159,6 +159,7 @@ const { t } = useI18n()
 
 const props = defineProps<{
   modelValue: string[]
+  modelMappings?: { from: string; to: string }[]
   platform?: string
   platforms?: string[]
   accountId?: number
@@ -172,6 +173,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: string[]]
+  'upstream-synced': []
 }>()
 
 const appStore = useAppStore()
@@ -199,7 +201,18 @@ const normalizedPlatforms = computed(() => {
   )
 })
 
-const upstreamSyncPlatforms = new Set(['anthropic', 'openai', 'gemini', 'antigravity', 'grok'])
+const upstreamSyncPlatforms = new Set([
+  'anthropic',
+  'openai',
+  'gemini',
+  'antigravity',
+  'grok',
+  'kimi',
+  'zhipu',
+  'deepseek',
+  'minimax',
+  'opencode_go'
+])
 const canSyncUpstream = computed(() => {
   if (props.accountId) {
     if (normalizedPlatforms.value.length === 0) return true
@@ -262,6 +275,11 @@ const addCustom = () => {
     appStore.showInfo(t('admin.accounts.modelExists'))
     return
   }
+  const conflict = props.modelMappings?.find(mapping => mapping.from.trim() === model && mapping.to.trim() && mapping.to.trim() !== model)
+  if (conflict) {
+    appStore.showInfo(t('admin.accounts.modelMappingConflict', { from: model, to: conflict.to.trim() }))
+    return
+  }
   emit('update:modelValue', [...props.modelValue, model])
   customModel.value = ''
 }
@@ -303,6 +321,10 @@ const syncUpstreamModels = async () => {
       return
     }
 
+    if (!props.accountId) {
+      emit('upstream-synced')
+    }
+
     const newModels = [...props.modelValue]
     let addedCount = 0
     for (const model of upstreamModels) {
@@ -313,10 +335,24 @@ const syncUpstreamModels = async () => {
     }
 
     emit('update:modelValue', newModels)
+    const warnings = result.warnings ?? []
+    const hasPartialMetadata = warnings.some(
+      warning => warning.code === 'upstream_model_metadata_partial'
+    )
+    const hasIncompleteMetadata = warnings.some(
+      warning => warning.code === 'upstream_model_metadata_incomplete'
+    )
+    if (hasIncompleteMetadata) {
+      appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataIncomplete'))
+      return
+    }
     if (addedCount > 0) {
       appStore.showSuccess(t('admin.accounts.syncUpstreamModelsSuccess', { count: addedCount, total: upstreamModels.length }))
     } else {
       appStore.showInfo(t('admin.accounts.syncUpstreamModelsNoChanges', { count: upstreamModels.length }))
+    }
+    if (hasPartialMetadata) {
+      appStore.showWarning(t('admin.accounts.syncUpstreamModelsMetadataPartial'))
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : t('admin.accounts.syncUpstreamModelsFailed')
