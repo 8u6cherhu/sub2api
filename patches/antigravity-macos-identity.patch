@@ -1,8 +1,8 @@
 diff --git a/backend/internal/pkg/antigravity/request_transformer.go b/backend/internal/pkg/antigravity/request_transformer.go
-index 9da3cc3..046c50f 100644
+index 7e6d34f..9483b13 100644
 --- a/backend/internal/pkg/antigravity/request_transformer.go
 +++ b/backend/internal/pkg/antigravity/request_transformer.go
-@@ -197,11 +197,13 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
+@@ -184,11 +184,13 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
  const antigravityIdentity = `<identity>
  You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.
  You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.
@@ -19,7 +19,7 @@ index 9da3cc3..046c50f 100644
  
  func defaultIdentityPatch(_ string) string {
  	return antigravityIdentity
-@@ -346,9 +348,6 @@ func buildSystemInstruction(system json.RawMessage, modelName string, opts Trans
+@@ -379,9 +381,6 @@ func buildSystemInstruction(system json.RawMessage, modelName string, opts Trans
  		}
  		parts = append(parts, GeminiPart{Text: identityPatch})
  
@@ -29,7 +29,7 @@ index 9da3cc3..046c50f 100644
  	}
  
  	// 添加用户的 system prompt
-@@ -359,11 +358,6 @@ func buildSystemInstruction(system json.RawMessage, modelName string, opts Trans
+@@ -392,11 +391,6 @@ func buildSystemInstruction(system json.RawMessage, modelName string, opts Trans
  		parts = append(parts, GeminiPart{Text: mcpXMLProtocol})
  	}
  

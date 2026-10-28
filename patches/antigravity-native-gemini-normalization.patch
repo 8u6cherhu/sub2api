@@ -1,8 +1,8 @@
 diff --git a/backend/internal/service/antigravity_gateway_gemini.go b/backend/internal/service/antigravity_gateway_gemini.go
-index 2093911..3605072 100644
+index 5a409a9..0d9dc49 100644
 --- a/backend/internal/service/antigravity_gateway_gemini.go
 +++ b/backend/internal/service/antigravity_gateway_gemini.go
-@@ -122,6 +122,9 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
+@@ -130,6 +130,9 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
  	if err != nil {
  		return nil, s.writeGoogleError(c, http.StatusBadRequest, "Invalid request body")
  	}
@@ -13,10 +13,10 @@ index 2093911..3605072 100644
  	// 清理 Schema
  	if cleanedBody, err := cleanGeminiRequest(injectedBody); err == nil {
 diff --git a/backend/internal/service/antigravity_gateway_service.go b/backend/internal/service/antigravity_gateway_service.go
-index b835a84..2865cd3 100644
+index 66a0f02..ea0a707 100644
 --- a/backend/internal/service/antigravity_gateway_service.go
 +++ b/backend/internal/service/antigravity_gateway_service.go
-@@ -606,6 +606,54 @@ func injectIdentityPatchToGeminiRequest(body []byte) ([]byte, error) {
+@@ -680,6 +680,54 @@ func injectIdentityPatchToGeminiRequest(body []byte) ([]byte, error) {
  	return json.Marshal(request)
  }
  

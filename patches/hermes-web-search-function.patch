@@ -1,5 +1,5 @@
 diff --git a/backend/internal/pkg/antigravity/oauth.go b/backend/internal/pkg/antigravity/oauth.go
-index 625dcae..452ee4e 100644
+index 2ad14af..1bb62f5 100644
 --- a/backend/internal/pkg/antigravity/oauth.go
 +++ b/backend/internal/pkg/antigravity/oauth.go
 @@ -122,10 +122,16 @@ func GetUserAgentVersionForContext(ctx context.Context) string {
@@ -7,12 +7,12 @@ index 625dcae..452ee4e 100644
  // BuildUserAgent 使用指定版本号构造 User-Agent；版本为空或非法时回退默认值。
  func BuildUserAgent(version string) string {
 -	if normalized := NormalizeUserAgentVersion(version); normalized != "" {
--		return fmt.Sprintf("antigravity/%s windows/amd64", normalized)
+-		return fmt.Sprintf("antigravity/hub/%s windows/amd64", normalized)
 +	normalized := NormalizeUserAgentVersion(version)
 +	if normalized == "" {
 +		normalized = defaultUserAgentVersion
  	}
--	return fmt.Sprintf("antigravity/%s windows/amd64", defaultUserAgentVersion)
+-	return fmt.Sprintf("antigravity/hub/%s windows/amd64", defaultUserAgentVersion)
 +	var major, minor, patch int
 +	_, _ = fmt.Sscanf(normalized, "%d.%d.%d", &major, &minor, &patch)
 +	if major > 2 || major == 2 && (minor > 9 || minor == 9 && patch >= 1) {
@@ -23,10 +23,10 @@ index 625dcae..452ee4e 100644
  
  // GetUserAgentForContext 返回当前请求应使用的 User-Agent。
 diff --git a/backend/internal/pkg/antigravity/request_transformer.go b/backend/internal/pkg/antigravity/request_transformer.go
-index 192c4cd..84f847f 100644
+index a137489..7e6d34f 100644
 --- a/backend/internal/pkg/antigravity/request_transformer.go
 +++ b/backend/internal/pkg/antigravity/request_transformer.go
-@@ -54,9 +54,6 @@ func DefaultTransformOptions() TransformOptions {
+@@ -55,9 +55,6 @@ func DefaultTransformOptions() TransformOptions {
  	}
  }
  
@@ -36,7 +36,7 @@ index 192c4cd..84f847f 100644
  // MaxTokensBudgetPadding max_tokens 自动调整时在 budget_tokens 基础上增加的额度
  // Claude API 要求 max_tokens > thinking.budget_tokens，否则返回 400 错误
  const MaxTokensBudgetPadding = 1000
-@@ -88,18 +85,11 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
+@@ -89,18 +86,11 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
  	// 用于存储 tool_use id -> name 映射
  	toolIDToName := make(map[string]string)
  
@@ -56,7 +56,7 @@ index 192c4cd..84f847f 100644
  	}
  
  	// 检测是否启用 thinking
-@@ -731,7 +721,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
+@@ -803,7 +793,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
  		return nil
  	}
  
@@ -64,7 +64,7 @@ index 192c4cd..84f847f 100644
  	hasCodeExecution := false
  	for _, tool := range tools {
  		if isCodeExecutionTool(tool) {
-@@ -743,7 +732,7 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
+@@ -815,7 +804,7 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
  	// 普通工具
  	var funcDecls []GeminiFunctionDecl
  	for _, tool := range tools {
@@ -73,7 +73,7 @@ index 192c4cd..84f847f 100644
  			continue
  		}
  		// 跳过无效工具名称
-@@ -790,15 +779,10 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
+@@ -862,15 +851,10 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
  		})
  	}
  
@@ -91,7 +91,7 @@ index 192c4cd..84f847f 100644
  		hasCodeExecution = false
  	}
  
-@@ -808,17 +792,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
+@@ -880,17 +864,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
  			FunctionDeclarations: funcDecls,
  		})
  	}

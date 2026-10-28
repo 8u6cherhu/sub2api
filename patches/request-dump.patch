@@ -1,5 +1,5 @@
 diff --git a/backend/internal/pkg/antigravity/client.go b/backend/internal/pkg/antigravity/client.go
-index a3ea670..277b1f8 100644
+index b147e5b..98817a6 100644
 --- a/backend/internal/pkg/antigravity/client.go
 +++ b/backend/internal/pkg/antigravity/client.go
 @@ -17,6 +17,7 @@ import (
