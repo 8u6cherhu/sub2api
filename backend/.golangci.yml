@@ -129,6 +129,16 @@ linters:
       - path: 'internal/repository/http_upstream(_http2_keepalive_test)?\.go$'
         linters: [staticcheck]
         text: 'SA1019'
+      # The server still uses x/net/http2's legacy fields because the same
+      # configuration must work across the supported Go release range.
+      - path: 'internal/server/http\.go$'
+        linters: [staticcheck]
+        text: 'SA1019'
+      # GoAwayError is intentionally inspected for compatibility with older
+      # x/net releases used by the upstream client implementation.
+      - path: 'internal/service/openai_codex_models_(service|service_test)\.go$'
+        linters: [staticcheck]
+        text: 'SA1019'
       # These websocket lifecycle tests deliberately close a connection during
       # cancellation; the returned close error is not actionable in teardown.
       - path: 'internal/service/openai_ws_(client_read|passthrough_turn_pricing|v2_passthrough_lifecycle)_test\.go$'
