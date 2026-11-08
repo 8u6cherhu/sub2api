@@ -1,111 +1,25 @@
-diff --git a/backend/internal/pkg/antigravity/oauth.go b/backend/internal/pkg/antigravity/oauth.go
-index 2ad14af..1bb62f5 100644
---- a/backend/internal/pkg/antigravity/oauth.go
-+++ b/backend/internal/pkg/antigravity/oauth.go
-@@ -122,10 +122,16 @@ func GetUserAgentVersionForContext(ctx context.Context) string {
- 
- // BuildUserAgent 使用指定版本号构造 User-Agent；版本为空或非法时回退默认值。
- func BuildUserAgent(version string) string {
--	if normalized := NormalizeUserAgentVersion(version); normalized != "" {
--		return fmt.Sprintf("antigravity/hub/%s windows/amd64", normalized)
-+	normalized := NormalizeUserAgentVersion(version)
-+	if normalized == "" {
-+		normalized = defaultUserAgentVersion
- 	}
--	return fmt.Sprintf("antigravity/hub/%s windows/amd64", defaultUserAgentVersion)
-+	var major, minor, patch int
-+	_, _ = fmt.Sscanf(normalized, "%d.%d.%d", &major, &minor, &patch)
-+	if major > 2 || major == 2 && (minor > 9 || minor == 9 && patch >= 1) {
-+		return fmt.Sprintf("antigravity/hub/%s darwin/arm64", normalized)
-+	}
-+	return fmt.Sprintf("antigravity/%s darwin/arm64", normalized)
- }
- 
- // GetUserAgentForContext 返回当前请求应使用的 User-Agent。
 diff --git a/backend/internal/pkg/antigravity/request_transformer.go b/backend/internal/pkg/antigravity/request_transformer.go
-index a137489..7e6d34f 100644
+index 0b3396e..afab647 100644
 --- a/backend/internal/pkg/antigravity/request_transformer.go
 +++ b/backend/internal/pkg/antigravity/request_transformer.go
-@@ -55,9 +55,6 @@ func DefaultTransformOptions() TransformOptions {
- 	}
+@@ -787,17 +787,9 @@ func hasClientFunctionTools(tools []ClaudeTool) bool {
  }
  
--// webSearchFallbackModel web_search 请求使用的降级模型
--const webSearchFallbackModel = "gemini-2.5-flash"
--
- // MaxTokensBudgetPadding max_tokens 自动调整时在 budget_tokens 基础上增加的额度
- // Claude API 要求 max_tokens > thinking.budget_tokens，否则返回 400 错误
- const MaxTokensBudgetPadding = 1000
-@@ -89,18 +86,11 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
- 	// 用于存储 tool_use id -> name 映射
- 	toolIDToName := make(map[string]string)
- 
--	// 仅在「只有内置 web_search、没有客户端 function tools」时走 web_search 降级模型。
--	// Antigravity v1internal 不支持内置工具与 functionDeclarations 混用（即使设置
--	// includeServerSideToolInvocations 仍会 400，见 issue #6464），混用时会丢弃内置搜索，
--	// 因此不能再强制切到 gemini-2.5-flash，否则 Codex 等带 shell 工具的请求会整单失败。
--	useWebSearchRequest := hasWebSearchTool(claudeReq.Tools) && !hasClientFunctionTools(claudeReq.Tools)
-+	useWebSearchRequest := hasWebSearchTool(claudeReq.Tools)
- 	requestType := "agent"
- 	targetModel := mappedModel
- 	if useWebSearchRequest {
- 		requestType = "web_search"
--		if targetModel != webSearchFallbackModel {
--			targetModel = webSearchFallbackModel
--		}
- 	}
- 
- 	// 检测是否启用 thinking
-@@ -803,7 +793,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
- 		return nil
- 	}
- 
--	hasWebSearch := hasWebSearchTool(tools)
- 	hasCodeExecution := false
- 	for _, tool := range tools {
- 		if isCodeExecutionTool(tool) {
-@@ -815,7 +804,7 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
- 	// 普通工具
- 	var funcDecls []GeminiFunctionDecl
- 	for _, tool := range tools {
--		if isWebSearchTool(tool) || isCodeExecutionTool(tool) {
-+		if isCodeExecutionTool(tool) {
- 			continue
- 		}
- 		// 跳过无效工具名称
-@@ -862,15 +851,10 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
- 		})
- 	}
- 
--	// Antigravity v1internal 协议不支持内置工具与 functionDeclarations 混用：
--	// 即便带上 includeServerSideToolInvocations 仍返回 400（issue #6464）。
--	// Codex 默认同时带 web_search 与 shell 等客户端工具，优先保留客户端工具，
--	// 使代理会话可继续，而不是整单 upstream_error。
- 	if len(funcDecls) > 0 {
--		if hasWebSearch || hasCodeExecution {
--			log.Printf("[antigravity] dropping built-in tools (web_search/code_execution) because client function tools are present; Antigravity v1internal rejects the mix")
-+		if hasCodeExecution {
-+			log.Printf("[antigravity] dropping built-in code_execution because function tools are present; Antigravity v1internal rejects the mix")
- 		}
--		hasWebSearch = false
- 		hasCodeExecution = false
- 	}
- 
-@@ -880,17 +864,6 @@ func buildTools(tools []ClaudeTool) []GeminiToolDeclaration {
- 			FunctionDeclarations: funcDecls,
- 		})
- 	}
--	if hasWebSearch {
--		declarations = append(declarations, GeminiToolDeclaration{
--			GoogleSearch: &GeminiGoogleSearch{
--				EnhancedContent: &GeminiEnhancedContent{
--					ImageSearch: &GeminiImageSearch{
--						MaxResultCount: 5,
--					},
--				},
--			},
--		})
+ func isWebSearchTool(tool ClaudeTool) bool {
+-	if strings.HasPrefix(tool.Type, "web_search") || tool.Type == "google_search" {
+-		return true
 -	}
- 	if hasCodeExecution {
- 		declarations = append(declarations, GeminiToolDeclaration{
- 			CodeExecution: &GeminiCodeExecution{},
+-
+-	name := strings.TrimSpace(tool.Name)
+-	switch name {
+-	case "web_search", "google_search", "web_search_20250305":
+-		return true
+-	default:
+-		return false
+-	}
++	// Client functions may be named web_search; only an explicit type denotes
++	// server-executed search. Keep the client's schema and agent routing.
++	return strings.HasPrefix(tool.Type, "web_search") || tool.Type == "google_search"
+ }
+ 
+ func isCodeExecutionTool(tool ClaudeTool) bool {

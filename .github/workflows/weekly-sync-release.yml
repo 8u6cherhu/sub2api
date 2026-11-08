@@ -1,6 +1,6 @@
 name: Weekly upstream build and release
 
-# Goal: always build the latest Wei-Shaw/sub2api main, then apply the four
+# Goal: always build the latest Wei-Shaw/sub2api main, then apply the five
 # maintained Hermes patches exactly. If any patch no longer applies cleanly,
 # fail the workflow so the patch can be reviewed and rebased; never silently
 # accept partial or approximate upstream behavior.
@@ -14,7 +14,9 @@ on:
       - hermes-build
     paths:
       - .github/workflows/weekly-sync-release.yml
+      - .github/patch-tests/**
       - patches/hermes-web-search-function.patch
+      - patches/antigravity-macos-user-agent.patch
       - patches/request-dump.patch
       - patches/antigravity-macos-identity.patch
       - patches/antigravity-native-gemini-normalization.patch
@@ -55,6 +57,15 @@ jobs:
           patch_file="${GITHUB_WORKSPACE}/patches/hermes-web-search-function.patch"
           if ! git -C upstream apply --check "${patch_file}"; then
             echo "The Hermes compatibility patch must be rebased against the latest upstream main." >&2
+            exit 1
+          fi
+          git -C upstream apply "${patch_file}"
+
+      - name: Apply Antigravity macOS User-Agent patch
+        run: |
+          patch_file="${GITHUB_WORKSPACE}/patches/antigravity-macos-user-agent.patch"
+          if ! git -C upstream apply --check "${patch_file}"; then
+            echo "The Antigravity macOS User-Agent patch must be rebased against the latest upstream main." >&2
             exit 1
           fi
           git -C upstream apply "${patch_file}"
@@ -109,6 +120,19 @@ jobs:
           echo "image_name=${image_name}" >> "${GITHUB_OUTPUT}"
           echo "version=${upstream_version}-weekly.${upstream_short}" >> "${GITHUB_OUTPUT}"
 
+      - name: Set up Go for patch regression tests
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: upstream/backend/go.mod
+          cache-dependency-path: upstream/backend/go.sum
+
+      - name: Test patches against current upstream
+        run: |
+          cp -R .github/patch-tests/internal/. upstream/backend/internal/
+          cd upstream/backend
+          go test -tags=unit -count=1 -timeout=5m -run '^TestHermesPatch' \
+            ./internal/pkg/antigravity ./internal/pkg/requestdump ./internal/service
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -153,13 +177,13 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --target "${GITHUB_SHA}" \
             --title "Sub2API ${RELEASE_TAG}" \
-          --notes "Independent upstream build with four upstream-tracking compatibility patches.
+          --notes "Independent upstream build with five upstream-tracking compatibility patches.
 
           Upstream: ${UPSTREAM_REPOSITORY}@${UPSTREAM_SHA}
           Patch: ${PATCH_SHORT}
           Image: ${IMAGE_NAME}:weekly-latest
 
-          Every build starts from the latest Wei-Shaw/sub2api main, then applies the four maintained patches.
+          Every build starts from the latest Wei-Shaw/sub2api main, then applies the five maintained patches.
           The fork branches track upstream main. Hermes changes are maintained as patches and applied once to a fresh upstream checkout.
           The upstream SHA above identifies the source used for this image."
 
